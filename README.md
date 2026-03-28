@@ -66,7 +66,7 @@ Download from [git-scm.com](https://git-scm.com/downloads)
 
 ### 3. Clone Repository
 ```bash
-git clone https://github.com/Tanycy/IoT_Jan_26.git
+git clone https://github.com/Linkesh/IoT_Jan_26.git
 cd IoT_Jan_26
 ```
 
