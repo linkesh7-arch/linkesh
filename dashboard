@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Perak Flight Analytics - Historical RPi Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body, html { 
+            height: 100vh; width: 100vw; 
+            overflow: hidden; 
+            background: #0b1020; 
+            font-family: "Inter", sans-serif;
+            color: white;
+        }
+
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 2.2fr 1fr;
+            height: 100vh;
+            padding: 10px;
+            gap: 10px;
+        }
+
+        .left-side {
+            display: grid;
+            grid-template-rows: 1fr 1.2fr; 
+            gap: 10px;
+            min-height: 0;
+        }
+
+        .bottom-row-split {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            min-height: 0;
+        }
+
+        .sidebar {
+            display: grid;
+            grid-template-rows: 10vh 1.5fr 1fr 1.2fr; 
+            gap: 10px;
+            min-height: 0;
+        }
+
+        .kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+        .dist-row { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+
+        .card {
+            background: #121a3a;
+            border: 1px solid #1c254f;
+            border-radius: 6px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .card h3 {
+            font-size: 0.75rem;
+            color: #00f2ff;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            border-left: 3px solid #00f2ff;
+            padding-left: 8px;
+        }
+
+        .kpi-card {
+            background: #121a3a;
+            border: 1px solid #1c254f;
+            border-radius: 6px;
+            text-align: center;
+            display: flex; flex-direction: column; justify-content: center;
+        }
+        .kpi-card h2 { font-size: 1.2vw; color: #4fc3f7; }
+        .kpi-card p  { font-size: 0.6rem; color: #b0bec5; }
+
+        .chart-box { flex: 1; position: relative; width: 100%; min-height: 0; }
+        #map { height: 100%; width: 100%; border-radius: 4px; background: #0b1020; }
+        .map-legend {
+            position: absolute; bottom: 24px; left: 8px; z-index: 1000;
+            background: rgba(18,26,58,0.92); border: 1px solid #1c254f;
+            border-radius: 5px; padding: 6px 10px; font-size: 0.65rem; color: #e0e0e0;
+        }
+        .map-legend div { margin: 3px 0; display: flex; align-items: center; gap: 6px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+        .table-wrap { flex: 1; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.68rem; }
+        th {
+            text-align: left; color: #00f2ff; padding: 5px 6px;
+            border-bottom: 1px solid #1c254f;
+            position: sticky; top: 0; background: #121a3a;
+        }
+        td { padding: 5px 6px; border-bottom: 1px solid #1a2245; color: #e0e0e0; }
+        tr:hover td { background: #1c2a55; }
+
+        /* ICAO badge */
+        .icao-badge {
+            display: inline-block;
+            background: #0d2040;
+            color: #4fc3f7;
+            border: 1px solid #1c3a6e;
+            border-radius: 3px;
+            padding: 1px 5px;
+            font-size: 0.6rem;
+            font-family: monospace;
+            margin-left: 4px;
+        }
+
+        /* status indicator */
+        #depStatus {
+            font-size: 0.6rem;
+            color: #607d8b;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+    <div class="left-side">
+        <div class="card">
+            <h3>Flights / Hour</h3>
+            <div class="chart-box"><canvas id="hourChart"></canvas></div>
+        </div>
+        <div class="bottom-row-split">
+            <div class="card">
+                <h3>Recorded Flight Paths (Perak)</h3>
+                <div id="map" style="position:relative;">
+
+                </div>
+            </div>
+            <div class="card">
+                <h3>Aircraft Registration Country Distribution</h3>
+                <div class="chart-box"><canvas id="countryChart"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sidebar">
+        <div class="kpi-row" id="kpiContainer">
+            <div class="kpi-card"><h2 id="totalVal">--</h2><p>Total Recorded</p></div>
+            <div class="kpi-card"><h2 id="altVal">--</h2><p>Avg Alt (m)</p></div>
+            <div class="kpi-card"><h2 id="velVal">--</h2><p>Avg Vel (m/s)</p></div>
+        </div>
+
+        <div class="card">
+            <h3>Inferred Airport Locations</h3>
+            <div id="depStatus" style="font-size:0.6rem;color:#607d8b;margin-bottom:4px;">GPS inferred from collected flight trajectory data</div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Flight</th>
+                            <th>Type</th>
+                            <th>Inferred Airport</th>
+                            <th style="text-align:center;">GPS</th>
+
+                        </tr>
+                    </thead>
+                    <tbody id="airportTable"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Flights / Day</h3>
+            <div class="chart-box"><canvas id="dayChart"></canvas></div>
+        </div>
+
+        <div class="dist-row">
+            <div class="card">
+                <h3>Alt Dist.</h3>
+                <div class="chart-box"><canvas id="altChart"></canvas></div>
+            </div>
+            <div class="card">
+                <h3>Vel Dist.</h3>
+                <div class="chart-box"><canvas id="velChart"></canvas></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    Chart.defaults.color = "#ffffff";
+    const baseOpts = {
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+            y: { grid: { color: 'rgba(255,255,255,0.05)' } },
+            x: { grid: { display: false }, ticks: { maxRotation: 45, font: { size: 9 } } }
+        }
+    };
+
+    // ── Map ──────────────────────────────────────────────────────────────
+    const map = L.map("map").setView([4.5, 101.0], 8);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+    async function loadMapSpots() {
+        // ── Flight path dots (cyan) ──
+        const res    = await fetch('/api/map_data');
+        const points = await res.json();
+        points.forEach(p => {
+            L.circleMarker([p.latitude, p.longitude], {
+                radius: 2, color: '#00f2ff', fillOpacity: 0.4, stroke: false
+            }).addTo(map);
+        });
+        if (points.length > 0) map.panTo([points[0].latitude, points[0].longitude]);
+
+    }
+
+    // ── KPI ──────────────────────────────────────────────────────────────
+    async function loadSummary() {
+        const res  = await fetch('/api/summary');
+        const data = await res.json();
+        document.getElementById('totalVal').innerText = data.total_flights.toLocaleString();
+        document.getElementById('altVal').innerText   = data.average_altitude;
+        document.getElementById('velVal').innerText   = data.average_velocity;
+    }
+
+    // ── Inferred Airport Table ───────────────────────────────────────────
+    async function loadDepartureTable() {
+        try {
+            const res  = await fetch('/api/inferred_airports');
+            const data = await res.json();
+
+            const tbody = document.getElementById('airportTable');
+
+            if (!data || data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="color:#607d8b">No inferred data yet.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.map(d => {
+                const typeColor  = d.type === 'origin' ? '#ff9800' : '#e040fb';
+                const typeLabel  = d.type === 'origin' ? '🛫 Origin' : '🛬 Dest';
+                const airportDisplay = d.airport_name && d.airport_name !== 'Unknown'
+                    ? `<span style="color:#e0e0e0">${d.airport_name}</span>`
+                    : `<span style="color:#455a64">Unknown</span>`;
+                return `
+                <tr>
+                    <td style="font-family:monospace;color:#4fc3f7;white-space:nowrap">${d.flight_number}</td>
+                    <td style="color:${typeColor};white-space:nowrap">${typeLabel}</td>
+                    <td>${airportDisplay}</td>
+                    <td style="font-family:monospace;font-size:0.58rem;color:#ff9800;white-space:nowrap">
+                        ${d.est_lat}, ${d.est_lon}
+                    </td>
+                </tr>`;
+            }).join('');
+
+        } catch (e) {
+            document.getElementById('depStatus').textContent = "Error loading data.";
+            console.error(e);
+        }
+    }
+
+    // ── Charts ───────────────────────────────────────────────────────────
+    async function loadCharts() {
+        // Hourly
+        const hourData = await fetch('/api/flights_per_hour').then(r => r.json());
+        new Chart(document.getElementById('hourChart'), {
+            type: 'line',
+            data: {
+                labels: hourData.hours,
+                datasets: [{
+                    data: hourData.counts, borderColor: '#00f2ff',
+                    fill: true, backgroundColor: 'rgba(0,242,255,0.1)', tension: 0.4
+                }]
+            },
+            options: baseOpts
+        });
+
+        // Country donut + table (for the donut chart only — table now uses departure_airports)
+        const countryData = await fetch('/api/top_countries').then(r => r.json());
+        new Chart(document.getElementById('countryChart'), {
+            type: 'doughnut',
+            data: {
+                labels: countryData.countries.slice(0, 5),
+                datasets: [{
+                    data: countryData.counts.slice(0, 5),
+                    backgroundColor: ['#9575cd','#4fc3f7','#81c784','#ffb74d','#e57373'],
+                    borderWidth: 0
+                }]
+            },
+            options: {
+                ...baseOpts,
+                plugins: { legend: { display: true, position: 'bottom', labels: { font: { size: 9 } } } }
+            }
+        });
+
+        // Daily
+        const dayData = await fetch('/api/flights_per_day').then(r => r.json());
+        new Chart(document.getElementById('dayChart'), {
+            type: 'line',
+            data: {
+                labels: dayData.days,
+                datasets: [{ data: dayData.counts, borderColor: '#81c784', tension: 0.3 }]
+            },
+            options: baseOpts
+        });
+
+        // Altitude distribution
+        const altData = await fetch('/api/altitude_distribution').then(r => r.json());
+        new Chart(document.getElementById('altChart'), {
+            type: 'bar',
+            data: {
+                labels: altData.ranges,
+                datasets: [{ data: altData.counts, backgroundColor: '#4db6ac' }]
+            },
+            options: baseOpts
+        });
+
+        // Velocity distribution
+        const velData = await fetch('/api/velocity_distribution').then(r => r.json());
+        new Chart(document.getElementById('velChart'), {
+            type: 'bar',
+            data: {
+                labels: velData.ranges,
+                datasets: [{ data: velData.counts, backgroundColor: '#f06292' }]
+            },
+            options: baseOpts
+        });
+    }
+
+    // ── Init ─────────────────────────────────────────────────────────────
+    window.onload = () => {
+        loadSummary();
+        loadMapSpots();
+        loadCharts();
+        loadDepartureTable();
+        setTimeout(() => map.invalidateSize(), 500);
+    };
+</script>
+</body>
+</html>
